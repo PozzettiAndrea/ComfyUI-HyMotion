@@ -551,7 +551,7 @@ class HYMotionSampler:
                 "num_samples": ("INT", {
                     "default": 1, 
                     "min": 1, 
-                    "max": 4,
+                    "max": 12,
                     "tooltip": "Number of motion samples to generate in parallel. Each sample uses seed+i"
                 }),
                 "validation_steps": ("INT", {
