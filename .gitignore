@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+.vscode/
+.idea/
+*.log
+models/
+hymotion/HY-Motion-1.0/
+hymotion/HY-Motion-1.0-Lite/
+text_encoders/
+# assets/
+# workflows/*.json
+!workflows/example*.json
