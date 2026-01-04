@@ -35,7 +35,7 @@ class HYMotionPreview3D:
         sample_index = min(sample_index, k3d.shape[0] - 1)
         
         # Get specific sample (T, J, 3)
-        sample = k3d[sample_index].cpu().numpy()
+        sample = k3d[sample_index].detach().cpu().numpy()
         num_frames = sample.shape[0]
         num_joints = sample.shape[1]
         

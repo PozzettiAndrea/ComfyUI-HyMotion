@@ -109,7 +109,7 @@ class HYMotion3DModelLoader:
             for root, _, filenames in os.walk(base_path):
                 for f in filenames:
                     if any(f.lower().endswith(ext) for ext in extensions):
-                        rel = os.path.relpath(os.path.join(root, f), base_path)
+                        rel = os.path.relpath(os.path.join(root, f), base_path).replace("\\", "/")
                         files.append(f"{prefix}{rel}")
 
         scan_dir(input_dir, "input/")
@@ -153,7 +153,7 @@ class HYMotionFBXPlayer:
             for root, _, files in os.walk(output_dir):
                 for f in files:
                     if f.lower().endswith(".fbx"):
-                        rel = os.path.relpath(os.path.join(root, f), output_dir)
+                        rel = os.path.relpath(os.path.join(root, f), output_dir).replace("\\", "/")
                         fbx_files.append(rel)
         fbx_files = ["none"] + sorted(fbx_files)
 
@@ -176,7 +176,7 @@ class HYMotionFBXPlayer:
         selected = fbx_path.strip() if fbx_path and fbx_path.strip() else fbx_name
         if selected == "none": return (None,)
         # Map to "output/" prefix for consistency with the generic loader's logic
-        full_path = f"output/{selected}" if not selected.startswith("output/") else selected
+        full_path = f"output/{selected}".replace("\\", "/") if not selected.startswith("output/") else selected.replace("\\", "/")
         return {"ui": {"fbx_url": full_path}, "result": (full_path,)}
 
 NODE_CLASS_MAPPINGS = {

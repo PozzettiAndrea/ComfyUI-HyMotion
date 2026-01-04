@@ -4,7 +4,11 @@ import shutil
 import tempfile
 from typing import Dict, Optional
 
-import fbx
+try:
+    import fbx
+except ImportError:
+    fbx = None
+
 import numpy as np
 import torch
 from transforms3d.euler import mat2euler

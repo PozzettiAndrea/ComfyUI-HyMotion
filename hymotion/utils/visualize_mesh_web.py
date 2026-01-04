@@ -70,8 +70,8 @@ def sanitize_folder_name(folder_name: str) -> str:
     # but need to ensure slashes don't cause path traversal
     folder_name = re.sub(r"[^a-zA-Z0-9_./-]", "", folder_name)
 
-    # split path and clean each part
-    parts = folder_name.split("/")
+    # normalize backslashes and split path
+    parts = folder_name.replace("\\", "/").split("/")
     cleaned_parts = []
     for part in parts:
         if part and part not in [".", ".."]:

@@ -27,7 +27,16 @@ def mkdir_or_exist(dir_name: str, mode: int = 0o777) -> None:
 def symlink(src: str, dst: str, overwrite: bool = True, **kwargs) -> None:
     if os.path.lexists(dst) and overwrite:
         os.remove(dst)
-    os.symlink(src, dst, **kwargs)
+    try:
+        os.symlink(src, dst, **kwargs)
+    except (OSError, NotImplementedError):
+        # Fallback for Windows if symlink is not permitted
+        import shutil
+        if os.path.isdir(src):
+            shutil.copytree(src, dst)
+        else:
+            shutil.copy2(src, dst)
+        print(f"[HY-Motion] Symlink failed, copied instead: {src} -> {dst}")
 
 
 def is_filepath(x: Any) -> bool:

@@ -168,9 +168,9 @@ class HYMotionDiTLoader:
                     "default": model_options[0] if model_options else "HY-Motion-1.0-Lite",
                     "tooltip": "Select the HY-Motion DiT model checkpoint. 'Lite' version uses less VRAM."
                 }),
-                "device": (["cuda", "cpu"], {
+                "device": (["cuda", "cpu", "mps"], {
                     "default": "cuda",
-                    "tooltip": "Device to load the model on. CUDA is faster but requires GPU memory."
+                    "tooltip": "Device to load the model on. CUDA is faster but requires GPU memory. MPS is for Mac users."
                 }),
             },
         }
@@ -398,9 +398,9 @@ class HYMotionTextEncoderLoader:
                     "default": all_files[0] if all_files else "none",
                     "tooltip": "Qwen3 LLM text encoder. Provides detailed semantic understanding of motion descriptions."
                 }),
-                "device": (["cuda", "cpu"], {
+                "device": (["cuda", "cpu", "mps"], {
                     "default": "cuda",
-                    "tooltip": "Device for text encoder. CUDA is faster but uses VRAM."
+                    "tooltip": "Device for text encoder. CUDA is faster but uses VRAM. MPS is for Mac users."
                 }),
             },
         }
@@ -1029,7 +1029,7 @@ class HYMotionModularExportFBX:
                 continue
 
         # Return paths relative to ComfyUI output directory
-        relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR) for p in fbx_files]
+        relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR).replace("\\", "/") for p in fbx_files]
         
         # Select specific index for preview/output
         if not relative_paths:
@@ -1237,7 +1237,7 @@ class HYMotionSaveNPZ:
             print(f"[HY-Motion] NPZ saved: {npz_path}")
 
         # Return paths relative to ComfyUI output directory
-        relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR) for p in npz_files]
+        relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR).replace("\\", "/") for p in npz_files]
         result = "\n".join(relative_paths)
         return (result,)
 

@@ -23,14 +23,18 @@ except ImportError:
 
 
 def _get_local_ip():
-    import subprocess
-
-    result = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5)
-    if result.returncode == 0:
-        for ip in result.stdout.strip().split():
-            if not ip.startswith("127.") and not ip.startswith("172.17."):
-                return ip
-    return "localhost"
+    import socket
+    try:
+        # Create a dummy socket to determine local IP
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.1)
+        # Doesn't need to be reachable
+        s.connect(('8.8.8.8', 1))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        return "localhost"
 
 
 def _now():
@@ -64,11 +68,18 @@ class T2MRuntime:
         if force_cpu:
             print(">>> [INFO] CPU mode enabled via HY_MOTION_DEVICE=cpu environment variable")
             self.device_ids = []
+            self.device_type = "cpu"
         elif torch.cuda.is_available():
             all_ids = list(range(torch.cuda.device_count()))
             self.device_ids = all_ids if device_ids is None else [i for i in device_ids if i in all_ids]
+            self.device_type = "cuda"
+        elif torch.backends.mps.is_available():
+            self.device_ids = [0]
+            self.device_type = "mps"
+            print(">>> [INFO] MPS (Apple Silicon) mode enabled")
         else:
             self.device_ids = []
+            self.device_type = "cpu"
 
         self.pipelines = []
         self._gpu_load = []
@@ -149,7 +160,7 @@ class T2MRuntime:
                     build_text_encoder=not self.skip_text,
                     allow_empty_ckpt=allow_empty_ckpt,
                 )
-                p.to(torch.device(f"cuda:{gid}"))
+                p.to(torch.device(f"{self.device_type}:{gid}"))
                 self.pipelines.append(p)
             self._gpu_load = [0] * len(self.pipelines)
 

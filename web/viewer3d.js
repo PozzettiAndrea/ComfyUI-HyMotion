@@ -53,8 +53,8 @@ app.registerExtension({
             cycleBtn.style.cssText = "cursor:pointer; padding:2px 6px; font-size:11px; background:#444; color:#fff; border:1px solid #666; border-radius:3px;";
 
             const exportBtn = document.createElement("button");
-            exportBtn.innerText = "Export As";
-            exportBtn.title = "Export the selected object as GLB";
+            exportBtn.innerText = "Export";
+            exportBtn.title = "Export or Download selection";
             exportBtn.style.cssText = "cursor:pointer; padding:2px 6px; font-size:11px; background:#226622; color:#fff; border:1px solid #338833; border-radius:3px; display:none;";
 
             controls.appendChild(playBtn);
@@ -354,6 +354,8 @@ app.registerExtension({
 
             const updateUI = () => {
                 const count = selectedModels.length;
+                const isLegacyPlayer = nodeData.name === "HYMotionFBXPlayer";
+
                 if (count === 0) {
                     statusLabel.innerText = "Ready";
                     statusLabel.style.color = "#888";
@@ -362,13 +364,23 @@ app.registerExtension({
                     const s = selectedModels[0];
                     statusLabel.innerText = `Selected ${s.type === 'model' ? 'Model' : 'Skeleton'}: ${s.obj.name || ''}`;
                     statusLabel.style.color = "#0f0";
-                    exportBtn.style.display = "block";
-                    exportBtn.innerText = "Export Selection";
+
+                    if (isLegacyPlayer) {
+                        exportBtn.style.display = "block";
+                        exportBtn.innerText = "Download FBX";
+                        exportBtn.title = "Download the original FBX file";
+                    } else {
+                        exportBtn.style.display = "block";
+                        exportBtn.innerText = "Export GLB";
+                        exportBtn.title = "Export selection as GLB (3D Mesh)";
+                    }
                 } else {
                     statusLabel.innerText = `Selected: ${count} objects (Ctrl+Click to add)`;
                     statusLabel.style.color = "#0f0";
-                    exportBtn.style.display = "block";
-                    exportBtn.innerText = `Export ${count} Objects`;
+                    exportBtn.style.display = isLegacyPlayer ? "none" : "block"; // Only supports single download for legacy player
+                    if (!isLegacyPlayer) {
+                        exportBtn.innerText = `Export ${count} GLBs`;
+                    }
                 }
             };
 
@@ -431,6 +443,25 @@ app.registerExtension({
                     return;
                 }
 
+                if (nodeData.name === "HYMotionFBXPlayer") {
+                    // Direct Download Logic for Legacy FBX Player
+                    const selection = selectedModels[0];
+                    if (selection.type !== "model") return;
+
+                    const { fileName, subfolder, fileType } = selection.obj;
+
+                    let fetchUrl = `${window.location.origin}/view?type=${encodeURIComponent(fileType || 'output')}&filename=${encodeURIComponent(fileName)}`;
+                    if (subfolder) fetchUrl += `&subfolder=${encodeURIComponent(subfolder)}`;
+
+                    const link = document.createElement('a');
+                    link.href = fetchUrl;
+                    link.download = fileName;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    return;
+                }
+
                 const { GLTFExporter } = window.__HY_MOTION_EXPORTER__;
                 if (!GLTFExporter) {
                     alert("GLTFExporter not loaded yet.");
@@ -473,7 +504,6 @@ app.registerExtension({
                                 link.href = URL.createObjectURL(blob);
                                 link.download = filename;
                                 link.click();
-                                // Tiny delay between multiple downloads to avoid browser block
                                 setTimeout(resolve, 300);
                             },
                             (error) => {
@@ -746,7 +776,13 @@ app.registerExtension({
 
                         scene.add(fbx);
                         currentModel = fbx;
-                        loadedModels.push({ model: fbx, name: customName || filename });
+                        loadedModels.push({
+                            model: fbx,
+                            name: customName || filename,
+                            fileName: filename,
+                            subfolder: subfolder,
+                            fileType: type
+                        });
 
                         // Positioning side-by-side
                         if (total > 1) {
