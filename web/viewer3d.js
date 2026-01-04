@@ -377,9 +377,13 @@ app.registerExtension({
                 } else {
                     statusLabel.innerText = `Selected: ${count} objects (Ctrl+Click to add)`;
                     statusLabel.style.color = "#0f0";
-                    exportBtn.style.display = isLegacyPlayer ? "none" : "block"; // Only supports single download for legacy player
-                    if (!isLegacyPlayer) {
+                    exportBtn.style.display = "block";
+                    if (isLegacyPlayer) {
+                        exportBtn.innerText = `Download ${count} FBXs`;
+                        exportBtn.title = "Download all selected FBX files";
+                    } else {
                         exportBtn.innerText = `Export ${count} GLBs`;
+                        exportBtn.title = "Export all selected GLB files";
                     }
                 }
             };
@@ -444,21 +448,27 @@ app.registerExtension({
                 }
 
                 if (nodeData.name === "HYMotionFBXPlayer") {
-                    // Direct Download Logic for Legacy FBX Player
-                    const selection = selectedModels[0];
-                    if (selection.type !== "model") return;
+                    // Direct Download Logic for Legacy FBX Player - Support Multi-Selection
+                    for (const selection of selectedModels) {
+                        if (selection.type !== "model") continue;
 
-                    const { fileName, subfolder, fileType } = selection.obj;
+                        const { fileName, subfolder, fileType } = selection.obj;
 
-                    let fetchUrl = `${window.location.origin}/view?type=${encodeURIComponent(fileType || 'output')}&filename=${encodeURIComponent(fileName)}`;
-                    if (subfolder) fetchUrl += `&subfolder=${encodeURIComponent(subfolder)}`;
+                        let fetchUrl = `${window.location.origin}/view?type=${encodeURIComponent(fileType || 'output')}&filename=${encodeURIComponent(fileName)}`;
+                        if (subfolder) fetchUrl += `&subfolder=${encodeURIComponent(subfolder)}`;
 
-                    const link = document.createElement('a');
-                    link.href = fetchUrl;
-                    link.download = fileName;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
+                        const link = document.createElement('a');
+                        link.href = fetchUrl;
+                        link.download = fileName;
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+
+                        // Add a small delay between downloads to prevent browser blocking
+                        if (selectedModels.length > 1) {
+                            await new Promise(resolve => setTimeout(resolve, 100));
+                        }
+                    }
                     return;
                 }
 
