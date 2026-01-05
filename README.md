@@ -52,7 +52,10 @@ Follow the steps below to download and place the required models correctly.
 ---
 
 ## 📅 Features
-- **3D Viewer:** Integrated Three.js based motion viewer.
+- **3D Viewer:** Integrated Three.js based motion viewer with **Interactive Gizmos** (G, R, S keys), **Resizable Viewport**, and **Sub-frame Interpolation** for butter-smooth playback.
+- **FBX Retargeting:** Advanced retargeting node supporting Mixamo and custom skeletons with intelligent fuzzy bone mapping.
+- **NPZ Support:** Generate and retarget SMPL-H motion data directly to FBX characters.
+- **Platform Independent:** Fully portable implementation using dynamic path resolution.
 - **Modular Nodes:** Flexible pipeline for motion generation.
 - **Support for Full and Lite Models.**
 

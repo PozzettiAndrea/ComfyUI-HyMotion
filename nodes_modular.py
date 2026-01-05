@@ -1224,6 +1224,18 @@ class HYMotionSaveNPZ:
                         data[key] = tensor.cpu().numpy()
                     else:
                         data[key] = np.array(tensor)
+            
+            # CONSISTENCY FIX: Include full SMPL-H poses (including fingers)
+            # This matches the data used during FBX export.
+            if "rot6d" in data and "transl" in data:
+                smpl_data = construct_smpl_data_dict(
+                    torch.from_numpy(data["rot6d"]), 
+                    torch.from_numpy(data["transl"])
+                )
+                # This adds 'poses' (T, 156) and other keys
+                for k, v in smpl_data.items():
+                    if k not in data:
+                        data[k] = v
 
             data["text"] = motion_data.text
             data["duration"] = motion_data.duration
@@ -1234,11 +1246,181 @@ class HYMotionSaveNPZ:
 
             np.savez(npz_path, **data)
             npz_files.append(npz_path)
-            print(f"[HY-Motion] NPZ saved: {npz_path}")
+            print(f"[HY-Motion] NPZ saved (Full Poses): {npz_path}")
 
         # Return paths relative to ComfyUI output directory
         relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR).replace("\\", "/") for p in npz_files]
         result = "\n".join(relative_paths)
+        return (result,)
+
+
+class HYMotionRetargetFBX:
+    """
+    Retargets HY-Motion data to custom FBX skeletons.
+    Uses the standalone retargeting script for maximum compatibility.
+    """
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "motion_data": ("HYMOTION_DATA", {
+                    "tooltip": "Motion data from HY-Motion Sampler to retarget onto your custom character"
+                }),
+                "target_fbx": ("STRING", {
+                    "default": "", 
+                    "multiline": False,
+                    "tooltip": "Path to your target FBX character (e.g., /path/to/mycharacter.fbx). This is the skeleton you want to apply the motion to."
+                }),
+                "output_dir": ("STRING", {
+                    "default": "hymotion_retarget",
+                    "tooltip": "Subdirectory in ComfyUI output folder where retargeted FBX files will be saved."
+                }),
+                "filename_prefix": ("STRING", {
+                    "default": "retarget",
+                    "tooltip": "Prefix for output filenames (e.g., 'dance' creates dance_001.fbx, dance_002.fbx)."
+                }),
+            },
+            "optional": {
+                "mapping_file": ("STRING", {
+                    "default": "", 
+                    "multiline": False,
+                    "tooltip": "Optional: Path to custom bone mapping JSON if auto-detection fails. Leave empty for automatic fuzzy matching."
+                }),
+                "yaw_offset": ("FLOAT", {
+                    "default": 0.0, 
+                    "min": -180.0, 
+                    "max": 180.0, 
+                    "step": 1.0,
+                    "tooltip": "Rotate the character around Y-axis in degrees (e.g., 180 to make them face the opposite direction)."
+                }),
+                "scale": ("FLOAT", {
+                    "default": 0.0, 
+                    "min": 0.0, 
+                    "max": 10.0, 
+                    "step": 0.01,
+                    "tooltip": "Force specific scale multiplier. Leave at 0.0 for automatic height-based scaling (recommended)."
+                }),
+                "neutral_fingers": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Use neutral finger rest pose to preserve natural finger curl from source animation. Disable for legacy behavior."
+                }),
+            }
+        }
+    
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("fbx_paths",)
+    FUNCTION = "retarget"
+    CATEGORY = "HY-Motion"
+    OUTPUT_NODE = True
+    
+    def retarget(self, motion_data, target_fbx, output_dir="hymotion_retarget", filename_prefix="retarget", 
+                 mapping_file="", yaw_offset=0.0, scale=0.0, neutral_fingers=True):
+        """Retarget motion to custom FBX skeleton."""
+        if not target_fbx or not os.path.exists(target_fbx):
+            raise ValueError(f"Target FBX file not found: {target_fbx}")
+        
+        # Create output directory
+        full_output_dir = os.path.join(COMFY_OUTPUT_DIR, output_dir)
+        os.makedirs(full_output_dir, exist_ok=True)
+        
+        timestamp = get_timestamp()
+        unique_id = str(uuid.uuid4())[:8]
+        output_fbx_files = []
+        
+        # Process each batch item separately
+        for batch_idx in range(motion_data.batch_size):
+            # Generate temp NPZ from motion_data for this batch item
+            temp_npz = os.path.join(COMFY_OUTPUT_DIR, f"hymotion_temp_{timestamp}_{batch_idx}.npz")
+            output_fbx = os.path.join(full_output_dir, f"{filename_prefix}_{timestamp}_{unique_id}_{batch_idx:03d}.fbx")
+            
+            try:
+                # Save motion data to temp NPZ (single batch item)
+                data_dict = {}
+                output_dict = motion_data.output_dict
+                
+                for key in ['keypoints3d', 'rot6d', 'transl', 'root_rotations_mat']:
+                    if key in output_dict and output_dict[key] is not None:
+                        tensor = output_dict[key][batch_idx]
+                        if isinstance(tensor, torch.Tensor):
+                            data_dict[key] = tensor.cpu().numpy()
+                        else:
+                            data_dict[key] = np.array(tensor)
+                
+                # Add SMPL-H full poses for consistency
+                if "rot6d" in data_dict and "transl" in data_dict:
+                    smpl_data = construct_smpl_data_dict(
+                        torch.from_numpy(data_dict["rot6d"]), 
+                        torch.from_numpy(data_dict["transl"])
+                    )
+                    for k, v in smpl_data.items():
+                        if k not in data_dict:
+                            data_dict[k] = v
+                
+                np.savez(temp_npz, **data_dict)
+                
+                # Import and run retargeting script
+                import subprocess
+                import sys
+                
+                # Find the retarget script dynamically
+                current_dir = os.path.dirname(os.path.realpath(__file__))
+                retarget_script = os.path.join(current_dir, "hymotion", "utils", "retarget_fbx.py")
+                
+                if not os.path.exists(retarget_script):
+                    raise FileNotFoundError(f"Retargeting script not found at expected location: {retarget_script}")
+                
+                # Build command
+                cmd = [
+                    sys.executable,
+                    retarget_script,
+                    "--source", temp_npz,
+                    "--target", target_fbx,
+                    "--output", output_fbx,
+                ]
+                
+                if mapping_file and mapping_file.strip():
+                    mapping_path = mapping_file if os.path.isabs(mapping_file) else os.path.join(current_dir, mapping_file)
+                    if os.path.exists(mapping_path):
+                        cmd.extend(["--mapping", mapping_path])
+                
+                if yaw_offset != 0.0:
+                   cmd.extend(["--yaw", str(yaw_offset)])
+                
+                if scale > 0.0:
+                    cmd.extend(["--scale", str(scale)])
+                
+                if not neutral_fingers:
+                    cmd.append("--no-neutral")
+                
+                # Run retargeting
+                print(f"[HYMotionRetargetFBX] Retargeting batch {batch_idx}/{motion_data.batch_size}...")
+                
+                result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                if batch_idx == 0:  # Only print full output for first batch
+                    print(result.stdout)
+                
+                if not os.path.exists(output_fbx):
+                    raise RuntimeError(f"Retargeting failed: output FBX not created for batch {batch_idx}")
+                
+                output_fbx_files.append(output_fbx)
+                print(f"[HYMotionRetargetFBX] Batch {batch_idx} done: {os.path.basename(output_fbx)}")
+                
+            except subprocess.CalledProcessError as e:
+                print(f"[HYMotionRetargetFBX] Batch {batch_idx} failed: {e.stderr}")
+                raise RuntimeError(f"Retargeting failed for batch {batch_idx}: {e.stderr}")
+            finally:
+                # Clean up temp NPZ
+                if os.path.exists(temp_npz):
+                    try:
+                        os.remove(temp_npz)
+                    except:
+                        pass
+        
+        # Return all paths (newline-separated)
+        relative_paths = [os.path.relpath(p, COMFY_OUTPUT_DIR).replace("\\", "/") for p in output_fbx_files]
+        result = "\n".join(relative_paths)
+        
+        print(f"[HYMotionRetargetFBX] Successfully retargeted {len(output_fbx_files)} batch item(s)")
         return (result,)
 
 
@@ -1250,6 +1432,7 @@ NODE_CLASS_MAPPINGS_MODULAR = {
     "HYMotionModularExportFBX": HYMotionModularExportFBX,
     "HYMotionPromptRewrite": HYMotionPromptRewrite,
     "HYMotionSaveNPZ": HYMotionSaveNPZ,
+    "HYMotionRetargetFBX": HYMotionRetargetFBX,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS_MODULAR = {
@@ -1260,5 +1443,6 @@ NODE_DISPLAY_NAME_MAPPINGS_MODULAR = {
     "HYMotionModularExportFBX": "HY-Motion Modular Export FBX",
     "HYMotionPromptRewrite": "HY-Motion Prompt Rewrite",
     "HYMotionSaveNPZ": "HY-Motion Save NPZ",
+    "HYMotionRetargetFBX": "HY-Motion Retarget to FBX",
 }
 

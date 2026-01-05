@@ -1,6 +1,7 @@
 const THREE_URL = "https://esm.sh/three@0.160.0";
 const FBX_LOADER_URL = "https://esm.sh/three@0.160.0/examples/jsm/loaders/FBXLoader.js";
 const ORBIT_CONTROLS_URL = "https://esm.sh/three@0.160.0/examples/jsm/controls/OrbitControls.js";
+const TRANSFORM_CONTROLS_URL = "https://esm.sh/three@0.160.0/examples/jsm/controls/TransformControls.js";
 const GLTF_LOADER_URL = "https://esm.sh/three@0.160.0/examples/jsm/loaders/GLTFLoader.js";
 const OBJ_LOADER_URL = "https://esm.sh/three@0.160.0/examples/jsm/loaders/OBJLoader.js";
 const GLTF_EXPORTER_URL = "https://esm.sh/three@0.160.0/examples/jsm/exporters/GLTFExporter.js";
@@ -20,12 +21,15 @@ app.registerExtension({
         nodeType.prototype.onNodeCreated = function () {
             const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
 
-            // Main container
+            // Main container with dynamic height
+            const defaultHeight = 400;
+            const storedHeight = localStorage.getItem('hymotion_viewer_height') || defaultHeight;
+
             const container = document.createElement("div");
-            container.style.cssText = "width:100%; height:400px; background:#111; position:relative; display:flex; flex-direction:column; border:1px solid #333; border-radius:4px; overflow:hidden;";
+            container.style.cssText = `width:100%; height:${storedHeight}px; background:#111; position:relative; display:flex; flex-direction:column; border:1px solid #333; border-radius:4px; overflow:hidden;`;
 
             const canvasContainer = document.createElement("div");
-            canvasContainer.style.cssText = "flex:1; width:100%;";
+            canvasContainer.style.cssText = "flex:1; width:100%; height:100%; min-height:0; overflow:hidden; position:relative;";
             container.appendChild(canvasContainer);
 
             // Playback controls
@@ -40,8 +44,16 @@ app.registerExtension({
             progress.type = "range";
             progress.min = 0;
             progress.max = 100;
+            progress.step = "any";
             progress.value = 0;
             progress.style.flex = "1";
+
+            let isScrubbing = false;
+            progress.onmousedown = progress.ontouchstart = () => { isScrubbing = true; };
+            const releaseScrubbing = () => { isScrubbing = false; };
+            window.addEventListener('mouseup', releaseScrubbing, { passive: true });
+            window.addEventListener('touchend', releaseScrubbing, { passive: true });
+            progress.onchange = releaseScrubbing; // Fallback
 
             const statusLabel = document.createElement("div");
             statusLabel.style.cssText = "font-size:11px; color:#888;";
@@ -57,6 +69,30 @@ app.registerExtension({
             exportBtn.title = "Export or Download selection";
             exportBtn.style.cssText = "cursor:pointer; padding:2px 6px; font-size:11px; background:#226622; color:#fff; border:1px solid #338833; border-radius:3px; display:none;";
 
+            // Gizmo mode buttons (on left side)
+            const gizmoGroup = document.createElement("div");
+            gizmoGroup.style.cssText = "display:flex; gap:2px; border-right:1px solid #444; padding-right:10px; margin-right:10px;";
+
+            const createGizmoBtn = (mode, icon, tooltip) => {
+                const btn = document.createElement("button");
+                btn.innerText = icon;
+                btn.title = tooltip;
+                btn.style.cssText = "cursor:pointer; padding:2px 8px; font-size:11px; background:#333; color:#aaa; border:1px solid #555; border-radius:3px; font-weight:bold;";
+                btn.dataset.mode = mode;
+                return btn;
+            };
+
+            const translateBtn = createGizmoBtn('translate', '⬌', 'Translate (Move) - G key');
+            const rotateBtn = createGizmoBtn('rotate', '↻', 'Rotate - R key');
+            const scaleBtn = createGizmoBtn('scale', '⊡', 'Scale - S key');
+            const gizmoOffBtn = createGizmoBtn('none', '✕', 'Disable Gizmo - Esc key');
+
+            gizmoGroup.appendChild(translateBtn);
+            gizmoGroup.appendChild(rotateBtn);
+            gizmoGroup.appendChild(scaleBtn);
+            gizmoGroup.appendChild(gizmoOffBtn);
+
+            controls.appendChild(gizmoGroup);
             controls.appendChild(playBtn);
             controls.appendChild(cycleBtn);
             controls.appendChild(exportBtn);
@@ -64,8 +100,64 @@ app.registerExtension({
             controls.appendChild(statusLabel);
             container.appendChild(controls);
 
+            // Hide playback controls for 3D Model Loader
+            if (nodeData.name === "HYMotion3DModelLoader") {
+                playBtn.style.display = "none";
+                progress.style.display = "none";
+            }
+
+            // Resize handle at the bottom
+            const resizeHandle = document.createElement("div");
+            resizeHandle.style.cssText = "position:absolute; bottom:0; left:0; right:0; height:6px; background:linear-gradient(to bottom, transparent, #444); cursor:ns-resize; z-index:1000;";
+            resizeHandle.title = "Drag to resize viewer height";
+
+            let isResizing = false;
+            let startY = 0;
+            let startHeight = 0;
+
+            resizeHandle.addEventListener('mousedown', (e) => {
+                isResizing = true;
+                startY = e.clientY;
+                startHeight = parseInt(container.style.height);
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isResizing) return;
+                const delta = e.clientY - startY;
+                const newHeight = Math.max(200, Math.min(1200, startHeight + delta)); // Min 200px, max 1200px
+                container.style.height = `${newHeight}px`;
+                localStorage.setItem('hymotion_viewer_height', newHeight);
+
+                // Force immediate renderer resize
+                requestAnimationFrame(() => {
+                    if (renderer && camera && canvasContainer.clientWidth > 0 && canvasContainer.clientHeight > 0) {
+                        camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+                        camera.updateProjectionMatrix();
+                        renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight, false);
+                    }
+                });
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isResizing) {
+                    isResizing = false;
+
+                    // Final sync after resize complete
+                    setTimeout(() => {
+                        if (renderer && camera && canvasContainer.clientWidth > 0 && canvasContainer.clientHeight > 0) {
+                            camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
+                            camera.updateProjectionMatrix();
+                            renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+                        }
+                    }, 50);
+                }
+            });
+
+            container.appendChild(resizeHandle);
+
             this.addDOMWidget("3d_viewer", "viewer", container);
-            this.size = [400, 480];
+            this.size = [400, parseInt(storedHeight) + 80]; // Add some padding for controls
 
             let THREE = window.__HY_MOTION_THREE__ || null;
             let renderer, scene, camera, orbitControls;
@@ -80,7 +172,12 @@ app.registerExtension({
             const frameTime = 1 / targetFPS;
             let mixers = [];
             let isInitialized = false;
+            let isInitializing = false;
             let pendingDataQueue = [];
+            let lastMotionsData = null;
+            let lastFbxUrl = null;
+            let lastModelUrl = null;
+            let animationFrameId = null;
             const node = this;
 
             let raycaster = null;
@@ -112,6 +209,8 @@ app.registerExtension({
             ];
 
             const initThree = async () => {
+                if (isInitialized || isInitializing) return;
+                isInitializing = true;
                 try {
                     if (!window.__HY_MOTION_THREE__) {
                         console.log("[HY-Motion] Loading Three.js libs...");
@@ -131,13 +230,19 @@ app.registerExtension({
                         camera.position.set(0, 2, 5);
 
                         renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+                        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
                         const width = canvasContainer.clientWidth || 400;
                         const height = canvasContainer.clientHeight || 400;
-                        renderer.setSize(width, height);
+                        renderer.setSize(width, height, false); // Use false to avoid updating CSS size directly
                         camera.aspect = width / height;
                         camera.updateProjectionMatrix();
 
-                        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+                        // Force canvas to fill container via CSS
+                        renderer.domElement.style.width = '100%';
+                        renderer.domElement.style.height = '100%';
+                        renderer.domElement.style.display = 'block';
+
                         canvasContainer.appendChild(renderer.domElement);
 
                         orbitControls = new OrbitControls(camera, renderer.domElement);
@@ -151,6 +256,83 @@ app.registerExtension({
                             MIDDLE: THREE.MOUSE.ROTATE,
                             RIGHT: THREE.MOUSE.PAN
                         };
+
+                        // Initialize TransformControls (gizmos)
+                        if (!window.__HY_MOTION_TRANSFORM__) {
+                            window.__HY_MOTION_TRANSFORM__ = await import(TRANSFORM_CONTROLS_URL);
+                        }
+                        const { TransformControls } = window.__HY_MOTION_TRANSFORM__;
+                        const transformControl = new TransformControls(camera, renderer.domElement);
+                        scene.add(transformControl);
+
+                        // Prevent orbit controls from interfering with gizmo
+                        transformControl.addEventListener('dragging-changed', (event) => {
+                            orbitControls.enabled = !event.value;
+                        });
+
+                        // Gizmo mode switching function
+                        let currentGizmoMode = 'none';
+                        const setGizmoMode = (mode) => {
+                            currentGizmoMode = mode;
+
+                            // Update button styles
+                            [translateBtn, rotateBtn, scaleBtn, gizmoOffBtn].forEach(btn => {
+                                if (btn.dataset.mode === mode) {
+                                    btn.style.background = '#0066cc';
+                                    btn.style.color = '#fff';
+                                } else {
+                                    btn.style.background = '#333';
+                                    btn.style.color = '#aaa';
+                                }
+                            });
+
+                            // Set gizmo mode
+                            if (mode === 'none') {
+                                transformControl.detach();
+                            } else {
+                                transformControl.setMode(mode);
+                                // Attach to first selected model if any
+                                if (selectedModels.length > 0 && selectedModels[0].type === 'model') {
+                                    transformControl.attach(selectedModels[0].obj.model);
+                                }
+                            }
+                        };
+
+                        // Button click handlers
+                        translateBtn.onclick = () => setGizmoMode('translate');
+                        rotateBtn.onclick = () => setGizmoMode('rotate');
+                        scaleBtn.onclick = () => setGizmoMode('scale');
+                        gizmoOffBtn.onclick = () => setGizmoMode('none');
+
+                        // Keyboard shortcuts (Blender-style)
+                        const handleKeyPress = (e) => {
+                            if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+                            switch (e.key.toLowerCase()) {
+                                case 'g':
+                                    setGizmoMode('translate');
+                                    e.preventDefault();
+                                    break;
+                                case 'r':
+                                    setGizmoMode('rotate');
+                                    e.preventDefault();
+                                    break;
+                                case 's':
+                                    setGizmoMode('scale');
+                                    e.preventDefault();
+                                    break;
+                                case 'escape':
+                                    setGizmoMode('none');
+                                    e.preventDefault();
+                                    break;
+                            }
+                        };
+
+                        document.addEventListener('keydown', handleKeyPress);
+
+                        // Store for later use
+                        this.transformControl = transformControl;
+                        this.setGizmoMode = setGizmoMode;
 
                         scene.add(new THREE.AmbientLight(0xffffff, 1.0));
                         const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
@@ -176,7 +358,7 @@ app.registerExtension({
                             if (canvasContainer.clientWidth > 0 && canvasContainer.clientHeight > 0) {
                                 camera.aspect = canvasContainer.clientWidth / canvasContainer.clientHeight;
                                 camera.updateProjectionMatrix();
-                                renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight);
+                                renderer.setSize(canvasContainer.clientWidth, canvasContainer.clientHeight, false);
                             }
                         });
                         resizeObserver.observe(canvasContainer);
@@ -187,7 +369,9 @@ app.registerExtension({
                     }
 
                     isInitialized = true;
+                    isInitializing = false;
                     while (pendingDataQueue.length > 0) handleData(pendingDataQueue.shift());
+                    if (animationFrameId) cancelAnimationFrame(animationFrameId);
                     animate();
                 } catch (e) {
                     console.error("[HY-Motion] Viewer Init Error:", e);
@@ -314,6 +498,18 @@ app.registerExtension({
                     applyHighlight(selection);
                     selectedModels.push(selection);
                 }
+
+                // Auto-attach gizmo if in gizmo mode and model is selected
+                if (this.transformControl && this.setGizmoMode && type === 'model') {
+                    const currentMode = [translateBtn, rotateBtn, scaleBtn].find(btn =>
+                        btn.style.background === 'rgb(0, 102, 204)' || btn.style.background === '#0066cc'
+                    )?.dataset.mode;
+
+                    if (currentMode) {
+                        this.transformControl.attach(obj.model);
+                    }
+                }
+
                 updateUI();
             };
 
@@ -528,36 +724,50 @@ app.registerExtension({
             };
 
             const animate = () => {
-                requestAnimationFrame(animate);
+                animationFrameId = requestAnimationFrame(animate);
                 if (!THREE) return; // Guard against early frames
                 const delta = clock ? clock.getDelta() : 0.016;
-                if (isPlaying) {
+
+                if (isPlaying && maxFrames > 0 && !isScrubbing) {
+                    // Update current frame (float for sub-frame interpolation)
+                    frameAccumulator += delta;
+                    // Wrap accumulator to loop correctly
+                    const duration = frameTime * maxFrames;
+                    if (frameAccumulator >= duration) {
+                        frameAccumulator %= duration;
+                    }
+                    if (frameAccumulator < 0) frameAccumulator = 0;
+
+                    currentFrame = frameAccumulator / frameTime;
+
+                    // Sync mixers
                     if (mixers.length > 0) {
-                        for (const m of mixers) m.update(delta);
-                        if (maxFrames > 0 && mixers[0]) {
-                            const time = mixers[0].time % (maxFrames * frameTime);
-                            currentFrame = Math.floor(time * targetFPS);
-                            progress.value = (currentFrame / maxFrames) * 100;
+                        const loopTime = maxFrames * frameTime;
+                        for (const m of mixers) {
+                            m.setTime(frameAccumulator % loopTime);
                         }
-                    } else if (maxFrames > 0) {
-                        frameAccumulator += delta;
-                        while (frameAccumulator >= frameTime) {
-                            currentFrame = (currentFrame + 1) % maxFrames;
-                            frameAccumulator -= frameTime;
+                    }
+
+                    // Sync skeleton view with interpolation (if any)
+                    updateSkeletons(currentFrame);
+
+                    // Update progress UI
+                    if (!isScrubbing) {
+                        const nextVal = (currentFrame / maxFrames) * 100;
+                        if (Math.abs(progress.value - nextVal) > 0.01) {
+                            progress.value = nextVal;
                         }
-                        updateSkeletons(currentFrame);
-                        progress.value = (currentFrame / maxFrames) * 100;
                     }
                 }
 
                 // Update hit proxies every frame to track animated movement
                 for (const obj of loadedModels) {
-                    if (!obj.hitProxy && THREE) {
+                    if (!obj.hitProxy) {
                         const geo = new THREE.BoxGeometry(1, 1, 1);
                         const mat = new THREE.MeshBasicMaterial({
                             visible: false,
                             wireframe: true,
-                            side: THREE.DoubleSide // ALLOW SELECTING FROM INSIDE
+                            side: THREE.DoubleSide
                         });
                         const proxy = new THREE.Mesh(geo, mat);
                         proxy.userData.selectableParent = obj;
@@ -566,14 +776,12 @@ app.registerExtension({
                         obj.hitProxy = proxy;
                     }
 
-                    if (obj.hitProxy) {
-                        const box = getRealtimeBox(obj.model);
-                        if (!box.isEmpty()) {
-                            const size = box.getSize(new THREE.Vector3());
-                            const center = box.getCenter(new THREE.Vector3());
-                            obj.hitProxy.scale.set(size.x * 1.3, size.y * 1.1, size.z * 1.3);
-                            obj.hitProxy.position.copy(center);
-                        }
+                    const box = getRealtimeBox(obj.model);
+                    if (!box.isEmpty()) {
+                        const size = box.getSize(new THREE.Vector3());
+                        const center = box.getCenter(new THREE.Vector3());
+                        obj.hitProxy.scale.set(size.x * 1.3, size.y * 1.1, size.z * 1.3);
+                        obj.hitProxy.position.copy(center);
                     }
                 }
 
@@ -592,6 +800,7 @@ app.registerExtension({
                         }
                     }
                 }
+
                 if (orbitControls) orbitControls.update();
                 if (renderer && scene && camera) renderer.render(scene, camera);
             };
@@ -675,6 +884,7 @@ app.registerExtension({
                 scene.add(masterGroup);
                 maxFrames = allMaxFrames;
                 currentFrame = 0;
+                frameAccumulator = 0; // Reset accumulator
                 updateSkeletons(0);
                 isPlaying = true;
                 playBtn.innerText = "Pause";
@@ -683,19 +893,49 @@ app.registerExtension({
                 if (loadedModels.length === 0) centerCameraOnObject(masterGroup);
             };
 
-            const updateSkeletons = (frameIdx) => {
+            const updateSkeletons = (frameIdxFloat) => {
                 for (const sample of skeletalSamples) {
-                    const f = frameIdx % sample.keypoints.length;
-                    const pos = sample.keypoints[f];
-                    if (!pos) continue;
+                    const totalFrames = sample.keypoints.length;
+                    if (totalFrames === 0) continue;
+
+                    const f1 = Math.floor(frameIdxFloat) % totalFrames;
+                    const f2 = (f1 + 1) % totalFrames;
+                    const alpha = frameIdxFloat % 1;
+
+                    const pos1 = sample.keypoints[f1];
+                    const pos2 = sample.keypoints[f2];
+                    if (!pos1 || !pos2) continue;
+
                     for (let i = 0; i < sample.joints.length; i++) {
-                        const p = pos[i];
-                        if (p) sample.joints[i].position.set(p[0], p[1], p[2]);
+                        const p1 = pos1[i];
+                        const p2 = pos2[i];
+                        if (p1 && p2) {
+                            // Linear interpolation between frames
+                            sample.joints[i].position.set(
+                                p1[0] + (p2[0] - p1[0]) * alpha,
+                                p1[1] + (p2[1] - p1[1]) * alpha,
+                                p1[2] + (p2[2] - p1[2]) * alpha
+                            );
+                        }
                     }
+
                     for (const b of sample.bones) {
-                        const p1 = pos[b.j1], p2 = pos[b.j2];
-                        if (p1 && p2 && THREE) {
-                            b.line.geometry.setFromPoints([new THREE.Vector3(p1[0], p1[1], p1[2]), new THREE.Vector3(p2[0], p2[1], p2[2])]);
+                        const j1p1 = pos1[b.j1], j1p2 = pos1[b.j2];
+                        const j2p1 = pos2[b.j1], j2p2 = pos2[b.j2];
+
+                        if (j1p1 && j1p2 && j2p1 && j2p2 && THREE) {
+                            // Interpolate bone endpoints
+                            const v1 = new THREE.Vector3(
+                                j1p1[0] + (j2p1[0] - j1p1[0]) * alpha,
+                                j1p1[1] + (j2p1[1] - j1p1[1]) * alpha,
+                                j1p1[2] + (j2p1[2] - j1p1[2]) * alpha
+                            );
+                            const v2 = new THREE.Vector3(
+                                j1p2[0] + (j2p2[0] - j1p2[0]) * alpha,
+                                j1p2[1] + (j2p2[1] - j1p2[1]) * alpha,
+                                j1p2[2] + (j2p2[2] - j1p2[2]) * alpha
+                            );
+                            b.line.geometry.setFromPoints([v1, v2]);
                         }
                     }
                 }
@@ -806,10 +1046,22 @@ app.registerExtension({
                         if (fbx.animations && fbx.animations.length > 0 || (result.animations && result.animations.length > 0)) {
                             const m = new THREE.AnimationMixer(fbx);
                             const anims = fbx.animations || result.animations;
-                            m.clipAction(anims[0]).play();
+                            const action = m.clipAction(anims[0]);
+                            action.play();
                             mixers.push(m);
-                            isPlaying = true;
-                            playBtn.innerText = "Pause";
+
+                            // If we don't have skeletal maxFrames, use the animation duration
+                            if (maxFrames === 0) {
+                                maxFrames = Math.floor(anims[0].duration * targetFPS);
+                                if (maxFrames === 0) maxFrames = 1; // Fallback
+                            }
+
+                            // Only auto-play if it's NOT the standalone 3D Model Loader
+                            if (nodeData.name !== "HYMotion3DModelLoader") {
+                                isPlaying = true;
+                                playBtn.innerText = "Pause";
+                            }
+                            frameAccumulator = 0; // Reset accumulator
                         }
 
                         statusLabel.innerText = total > 1 ? `Loaded ${loadedModels.length}/${total}` : "Model Loaded";
@@ -849,31 +1101,41 @@ app.registerExtension({
 
             const handleData = (data) => {
                 if (!data) return;
-                console.log("[HY-Motion] handleData received keys:", Object.keys(data));
 
                 if (data.motions) {
-                    try { loadMotions(typeof data.motions === 'string' ? JSON.parse(data.motions) : data.motions); }
-                    catch (e) { console.error("[HY-Motion] JSON parse error:", e); }
+                    const motionsStr = typeof data.motions === 'string' ? data.motions : JSON.stringify(data.motions);
+                    if (motionsStr !== lastMotionsData) {
+                        lastMotionsData = motionsStr;
+                        try { loadMotions(JSON.parse(motionsStr)); }
+                        catch (e) { console.error("[HY-Motion] JSON parse error:", e); }
+                    }
                 }
 
                 // Handle both legacy 'fbx_url' and new 'fbx_paths'
                 const rawUrl = data.fbx_url || data.fbx_paths;
                 if (rawUrl) {
                     const urlStr = ensureString(rawUrl);
-                    // Split by newline and load each model (usually just one, but supports multi-batch)
-                    const urls = urlStr.split('\n').map(u => u.trim()).filter(u => u.length > 0);
-                    urls.forEach((url, i) => {
-                        console.log("[HY-Motion] Found FBX to load:", url);
-                        // Extract filename for naming
-                        const name = url.split(/[/\\]/).pop();
-                        loadGenericModel(url, 'fbx', name, i, urls.length);
-                    });
+                    if (urlStr !== lastFbxUrl) {
+                        lastFbxUrl = urlStr;
+                        // Split by newline and load each model (usually just one, but supports multi-batch)
+                        const urls = urlStr.split('\n').map(u => u.trim()).filter(u => u.length > 0);
+                        urls.forEach((url, i) => {
+                            console.log("[HY-Motion] Found FBX to load:", url);
+                            // Extract filename for naming
+                            const name = url.split(/[/\\]/).pop();
+                            loadGenericModel(url, 'fbx', name, i, urls.length);
+                        });
+                    }
                 }
 
                 if (data.model_url) {
                     const url = ensureString(data.model_url);
                     const format = ensureString(data.format || 'fbx');
-                    loadGenericModel(url, format);
+                    const cacheKey = `${url}|${format}`;
+                    if (cacheKey !== lastModelUrl) {
+                        lastModelUrl = cacheKey;
+                        loadGenericModel(url, format);
+                    }
                 }
             };
 
@@ -923,12 +1185,20 @@ app.registerExtension({
             progress.oninput = () => {
                 isPlaying = false; playBtn.innerText = "Play";
                 const p = progress.value / 100;
-                if (mixers.length > 0) {
-                    for (const m of mixers) {
-                        if (m._actions[0]) m.setTime(p * m._actions[0]._clip.duration);
+                if (maxFrames > 0) {
+                    currentFrame = p * maxFrames;
+                    frameAccumulator = currentFrame * frameTime;
+
+                    // Sync mixers immediately
+                    if (mixers.length > 0) {
+                        for (const m of mixers) {
+                            m.setTime(frameAccumulator % (maxFrames * frameTime));
+                        }
                     }
+
+                    // Sync skeleton immediately
+                    updateSkeletons(currentFrame);
                 }
-                else if (maxFrames > 0) { currentFrame = Math.floor(p * maxFrames); updateSkeletons(currentFrame); }
             };
             return r;
         };
