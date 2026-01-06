@@ -3,7 +3,10 @@ import json
 import torch
 import numpy as np
 import folder_paths
+from server import PromptServer
+from aiohttp import web
 from .nodes_modular import HYMotionData
+from .hymotion.utils.bake_fbx import bake_transform_to_fbx
 
 class HYMotion3DViewer:
     """
@@ -124,6 +127,15 @@ class HYMotion3DModelLoader:
                     "default": files[0],
                     "tooltip": "Select a 3D model to view immediately"
                 }),
+                "translate_x": ("FLOAT", {"default": 0.0, "step": 0.01}),
+                "translate_y": ("FLOAT", {"default": 0.0, "step": 0.01}),
+                "translate_z": ("FLOAT", {"default": 0.0, "step": 0.01}),
+                "rotate_x": ("FLOAT", {"default": 0.0, "step": 0.1}),
+                "rotate_y": ("FLOAT", {"default": 0.0, "step": 0.1}),
+                "rotate_z": ("FLOAT", {"default": 0.0, "step": 0.1}),
+                "scale_x": ("FLOAT", {"default": 1.0, "step": 0.01}),
+                "scale_y": ("FLOAT", {"default": 1.0, "step": 0.01}),
+                "scale_z": ("FLOAT", {"default": 1.0, "step": 0.01}),
             }
         }
 
@@ -133,12 +145,23 @@ class HYMotion3DModelLoader:
     CATEGORY = "HY-Motion/view"
     OUTPUT_NODE = True
 
-    def load_model(self, model_path):
+    def load_model(self, model_path, translate_x=0, translate_y=0, translate_z=0, rotate_x=0, rotate_y=0, rotate_z=0, scale_x=1, scale_y=1, scale_z=1):
         if model_path == "none":
             return (None,)
         
         ext = os.path.splitext(model_path)[1].lower()[1:]
-        return {"ui": {"model_url": model_path, "format": ext}, "result": (model_path,)}
+        return {
+            "ui": {
+                "model_url": model_path, 
+                "format": ext,
+                "transform": {
+                    "translate": [translate_x, translate_y, translate_z],
+                    "rotate": [rotate_x, rotate_y, rotate_z],
+                    "scale": [scale_x, scale_y, scale_z]
+                }
+            }, 
+            "result": (model_path,)
+        }
 
 class HYMotionFBXPlayer:
     """
@@ -178,6 +201,49 @@ class HYMotionFBXPlayer:
         # Map to "output/" prefix for consistency with the generic loader's logic
         full_path = f"output/{selected}".replace("\\", "/") if not selected.startswith("output/") else selected.replace("\\", "/")
         return {"ui": {"fbx_url": full_path}, "result": (full_path,)}
+
+@PromptServer.instance.routes.post("/hymotion/bake_fbx")
+async def bake_fbx_route(request):
+    try:
+        data = await request.json()
+        input_path = data.get("input_path")
+        translation = data.get("translation", [0, 0, 0])
+        rotation = data.get("rotation", [0, 0, 0])
+        scale = data.get("scale", [1, 1, 1])
+
+        if not input_path:
+            return web.json_response({"status": "error", "message": "No input_path provided"}, status=400)
+
+        # Resolve paths
+        full_path = input_path
+        if not os.path.isabs(full_path):
+            # Check if it has a prefix like "output/" or "input/"
+            if full_path.startswith("output/"):
+                full_path = os.path.join(folder_paths.get_output_directory(), full_path[7:])
+            elif full_path.startswith("input/"):
+                full_path = os.path.join(folder_paths.get_input_directory(), full_path[6:])
+            else:
+                # Try output first (common for generated FBXs), then input
+                p_out = os.path.join(folder_paths.get_output_directory(), full_path)
+                p_in = os.path.join(folder_paths.get_input_directory(), full_path)
+                if os.path.exists(p_out):
+                    full_path = p_out
+                elif os.path.exists(p_in):
+                    full_path = p_in
+
+        if not os.path.exists(full_path):
+            return web.json_response({"status": "error", "message": f"File not found: {full_path}"}, status=404)
+
+        print(f"[HY-Motion] Baking FBX: {full_path}")
+        print(f"  Transform -> T: {translation}, R: {rotation}, S: {scale}")
+        
+        # Call the utility
+        success = bake_transform_to_fbx(full_path, full_path, translation, rotation, scale)
+        
+        return web.json_response({"status": "ok", "path": full_path})
+    except Exception as e:
+        print(f"[HY-Motion] Bake Error: {e}")
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
 
 NODE_CLASS_MAPPINGS = {
     "HYMotion3DViewer": HYMotion3DViewer,

@@ -7,11 +7,15 @@ const OBJ_LOADER_URL = "https://esm.sh/three@0.160.0/examples/jsm/loaders/OBJLoa
 const GLTF_EXPORTER_URL = "https://esm.sh/three@0.160.0/examples/jsm/exporters/GLTFExporter.js";
 
 import { app } from "../../../scripts/app.js";
+import { api } from "../../../scripts/api.js";
 
 console.log("[HY-Motion] app imported successfully:", !!app);
 
 app.registerExtension({
     name: "HYMotion.3DViewer",
+    async init() {
+        console.log("[HY-Motion] 3D Viewer Extension Loaded (v3.4 - Asset Bake Fix)");
+    },
     async beforeRegisterNodeDef(nodeType, nodeData, app) {
         if (nodeData.name !== "HYMotion3DViewer" &&
             nodeData.name !== "HYMotionFBXPlayer" &&
@@ -20,6 +24,8 @@ app.registerExtension({
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             const r = onNodeCreated ? onNodeCreated.apply(this, arguments) : undefined;
+            const node = this;
+            console.log("[HY-Motion] Creating 3D Viewer Node:", node.id);
 
             // Main container with dynamic height
             const defaultHeight = 400;
@@ -32,23 +38,70 @@ app.registerExtension({
             canvasContainer.style.cssText = "flex:1; width:100%; height:100%; min-height:0; overflow:hidden; position:relative;";
             container.appendChild(canvasContainer);
 
+            // Add custom slider styles
+            const style = document.createElement("style");
+            style.textContent = `
+                .hymotion-slider {
+                    -webkit-appearance: none;
+                    appearance: none;
+                    background: transparent;
+                    cursor: pointer;
+                }
+                .hymotion-slider::-webkit-slider-runnable-track {
+                    background: #444;
+                    height: 8px;
+                    border-radius: 4px;
+                }
+                .hymotion-slider::-webkit-slider-thumb {
+                    -webkit-appearance: none;
+                    appearance: none;
+                    margin-top: -6px; /* Centers thumb on the 8px track */
+                    background-color: #007bff;
+                    height: 20px;
+                    width: 20px;
+                    border-radius: 50%;
+                    border: 2px solid #fff;
+                    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+                    transition: transform 0.1s ease;
+                }
+                .hymotion-slider::-webkit-slider-thumb:hover {
+                    transform: scale(1.2);
+                    background-color: #008cff;
+                }
+                .hymotion-slider::-moz-range-track {
+                    background: #444;
+                    height: 8px;
+                    border-radius: 4px;
+                }
+                .hymotion-slider::-moz-range-thumb {
+                    background-color: #007bff;
+                    height: 18px;
+                    width: 18px;
+                    border-radius: 50%;
+                    border: 2px solid #fff;
+                    box-shadow: 0 0 5px rgba(0,0,0,0.5);
+                }
+            `;
+            container.appendChild(style);
+
             // Playback controls
             const controls = document.createElement("div");
-            controls.style.cssText = "height:40px; display:flex; align-items:center; padding:0 8px; gap:6px; background:#222; overflow:hidden; flex-shrink:0;";
+            controls.style.cssText = "height:50px; display:flex; align-items:center; padding:0 10px; gap:8px; background:#222; overflow:hidden; flex-shrink:0;";
 
             const playBtn = document.createElement("button");
             playBtn.innerText = "Play";
-            playBtn.style.cssText = "cursor:pointer; padding:4px 12px; font-size:13px; font-weight:500; flex-shrink:0; white-space:nowrap;";
+            playBtn.style.cssText = "cursor:pointer; padding:6px 16px; font-size:14px; font-weight:600; flex-shrink:0; white-space:nowrap;";
 
             const progress = document.createElement("input");
             progress.type = "range";
+            progress.className = "hymotion-slider";
             progress.min = 0;
             progress.max = 100;
             progress.step = "any";
             progress.value = 0;
             progress.style.flex = "1 1 auto";
-            progress.style.minWidth = "60px"; // Minimum slider width
-            progress.style.height = "6px"; // Thicker slider
+            progress.style.minWidth = "80px";
+            progress.style.margin = "0 10px";
 
             let isScrubbing = false;
             progress.onmousedown = progress.ontouchstart = () => { isScrubbing = true; };
@@ -58,18 +111,18 @@ app.registerExtension({
             progress.onchange = releaseScrubbing; // Fallback
 
             const statusLabel = document.createElement("div");
-            statusLabel.style.cssText = "font-size:12px; color:#888; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:150px;";
+            statusLabel.style.cssText = "font-size:13px; color:#888; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:180px;";
             statusLabel.innerText = "Ready";
 
             const cycleBtn = document.createElement("button");
             cycleBtn.innerText = "Select";
             cycleBtn.title = "Cycle through loaded models and skeletons";
-            cycleBtn.style.cssText = "cursor:pointer; padding:4px 8px; font-size:12px; background:#444; color:#fff; border:1px solid #666; border-radius:3px; font-weight:500; flex-shrink:0; white-space:nowrap;";
+            cycleBtn.style.cssText = "cursor:pointer; padding:6px 10px; font-size:13px; background:#444; color:#fff; border:1px solid #666; border-radius:3px; font-weight:500; flex-shrink:0; white-space:nowrap;";
 
             const exportBtn = document.createElement("button");
             exportBtn.innerText = "Export";
             exportBtn.title = "Export or Download selection";
-            exportBtn.style.cssText = "cursor:pointer; padding:4px 8px; font-size:12px; background:#226622; color:#fff; border:1px solid #338833; border-radius:3px; display:none; font-weight:500; flex-shrink:0; white-space:nowrap;";
+            exportBtn.style.cssText = "cursor:pointer; padding:6px 10px; font-size:13px; background:#226622; color:#fff; border:1px solid #338833; border-radius:3px; display:none; font-weight:500; flex-shrink:0; white-space:nowrap;";
 
             // Gizmo mode buttons (on left side)
             const gizmoGroup = document.createElement("div");
@@ -79,7 +132,7 @@ app.registerExtension({
                 const btn = document.createElement("button");
                 btn.innerText = icon;
                 btn.title = tooltip;
-                btn.style.cssText = "cursor:pointer; padding:4px 8px; font-size:13px; background:#333; color:#aaa; border:1px solid #555; border-radius:3px; font-weight:bold; flex-shrink:0;";
+                btn.style.cssText = "cursor:pointer; padding:6px 10px; font-size:14px; background:#333; color:#aaa; border:1px solid #555; border-radius:3px; font-weight:bold; flex-shrink:0;";
                 btn.dataset.mode = mode;
                 return btn;
             };
@@ -94,18 +147,181 @@ app.registerExtension({
             gizmoGroup.appendChild(scaleBtn);
             gizmoGroup.appendChild(gizmoOffBtn);
 
+            const applyBtn = document.createElement("button");
+            applyBtn.innerText = "Apply";
+            applyBtn.title = "Apply current transform widgets to the model's base pose and reset them";
+            applyBtn.style.cssText = "cursor:pointer; padding:6px 10px; font-size:13px; background:#2266aa; color:#fff; border:1px solid #3388ff; border-radius:3px; display:none; font-weight:500; flex-shrink:0; white-space:nowrap;";
+
+            const transformBtn = document.createElement("button");
+            transformBtn.innerText = "Transform";
+            transformBtn.title = "Open transform panel";
+            transformBtn.style.cssText = "cursor:pointer; padding:6px 10px; font-size:13px; background:#444; color:#fff; border:1px solid #666; border-radius:3px; display:none; font-weight:500; flex-shrink:0; white-space:nowrap;";
+
             controls.appendChild(gizmoGroup);
             controls.appendChild(playBtn);
             controls.appendChild(cycleBtn);
             controls.appendChild(exportBtn);
+            controls.appendChild(transformBtn);
+            controls.appendChild(applyBtn);
             controls.appendChild(progress);
             controls.appendChild(statusLabel);
             container.appendChild(controls);
+
+            // Transform Overlay Panel
+            const transformPanel = document.createElement("div");
+            transformPanel.style.cssText = "position:absolute; top:10px; right:10px; width:220px; background:rgba(20,20,20,0.85); backdrop-filter:blur(5px); border:1px solid #444; border-radius:8px; display:none; flex-direction:column; padding:12px; gap:10px; z-index:2000; color:#eee; font-family:sans-serif; user-select:none;";
+            canvasContainer.appendChild(transformPanel);
+
+            const refreshTransforms = () => {
+                try {
+                    if (!currentModel) return;
+                    const obj = loadedModels.find(m => m.model === currentModel);
+                    if (!obj) {
+                        console.warn("[HY-Motion] refreshTransforms: model not found in loadedModels");
+                        return;
+                    }
+
+                    const getVal = (name, def) => {
+                        const w = node.widgets?.find(widget => widget.name === name);
+                        return w ? parseFloat(w.value) || 0 : def;
+                    };
+
+                    const tx = getVal("translate_x", 0);
+                    const ty = getVal("translate_y", 0);
+                    const tz = getVal("translate_z", 0);
+                    const rx = getVal("rotate_x", 0);
+                    const ry = getVal("rotate_y", 0);
+                    const rz = getVal("rotate_z", 0);
+                    const sx = getVal("scale_x", 1);
+                    const sy = getVal("scale_y", 1);
+                    const sz = getVal("scale_z", 1);
+
+                    currentModel.position.set(obj.basePosition.x + tx, obj.basePosition.y + ty, obj.basePosition.z + tz);
+                    currentModel.rotation.set(
+                        (obj.baseRotation.x + rx) * Math.PI / 180,
+                        (obj.baseRotation.y + ry) * Math.PI / 180,
+                        (obj.baseRotation.z + rz) * Math.PI / 180
+                    );
+                    currentModel.scale.set(obj.baseScale.x * sx, obj.baseScale.y * sy, obj.baseScale.z * sz);
+
+                    // Sync panel inputs (except the one the user is currently typing in)
+                    const pInputs = transformPanel.querySelectorAll('input');
+                    pInputs.forEach(input => {
+                        const key = input.dataset.key;
+                        if (document.activeElement === input) return;
+                        if (key.startsWith("translate_")) {
+                            const axis = key.split("_")[1];
+                            const val = axis === "x" ? tx : (axis === "y" ? ty : tz);
+                            input.value = val.toFixed(2);
+                        } else if (key.startsWith("rotate_")) {
+                            const axis = key.split("_")[1];
+                            const val = axis === "x" ? rx : (axis === "y" ? ry : rz);
+                            input.value = val.toFixed(2);
+                        } else if (key.startsWith("scale_")) {
+                            const axis = key.split("_")[1];
+                            const val = axis === "x" ? sx : (axis === "y" ? sy : sz);
+                            input.value = val.toFixed(2);
+                        }
+                    });
+
+                    requestRender();
+                    if (app.graph) app.graph.setDirtyCanvas(true);
+                } catch (e) {
+                    console.error("[HY-Motion] refreshTransforms Error:", e);
+                }
+            };
+
+            const syncWidgetsFromModel = (model) => {
+                try {
+                    if (!model) return;
+                    const obj = loadedModels.find(m => m.model === model);
+                    if (!obj) return;
+
+                    const setWidget = (name, val) => {
+                        const w = node.widgets?.find(widget => widget.name === name);
+                        if (w) w.value = val;
+                    };
+
+                    // Calc relative position
+                    setWidget("translate_x", model.position.x - obj.basePosition.x);
+                    setWidget("translate_y", model.position.y - obj.basePosition.y);
+                    setWidget("translate_z", model.position.z - obj.basePosition.z);
+
+                    // Calc relative rotation (convert rad to deg)
+                    setWidget("rotate_x", (model.rotation.x * 180 / Math.PI) - obj.baseRotation.x);
+                    setWidget("rotate_y", (model.rotation.y * 180 / Math.PI) - obj.baseRotation.y);
+                    setWidget("rotate_z", (model.rotation.z * 180 / Math.PI) - obj.baseRotation.z);
+
+                    // Calc relative scale
+                    setWidget("scale_x", model.scale.x / (obj.baseScale.x || 1));
+                    setWidget("scale_y", model.scale.y / (obj.baseScale.y || 1));
+                    setWidget("scale_z", model.scale.z / (obj.baseScale.z || 1));
+
+                    // Update transform panel inputs
+                    const pInputs = transformPanel.querySelectorAll('input');
+                    pInputs.forEach(input => {
+                        const key = input.dataset.key;
+                        if (document.activeElement === input) return;
+                        const w = node.widgets?.find(widget => widget.name === key);
+                        if (w) input.value = parseFloat(w.value).toFixed(2);
+                    });
+
+                    if (app.graph) app.graph.setDirtyCanvas(true);
+                } catch (e) {
+                    console.error("[HY-Motion] syncWidgetsFromModel Error:", e);
+                }
+            };
+
+            const createTransformRow = (label, prefix, defaultVal) => {
+                const row = document.createElement("div");
+                row.style.cssText = "display:flex; flex-direction:column; gap:4px;";
+                const header = document.createElement("div");
+                header.innerText = label;
+                header.style.cssText = "font-size:11px; font-weight:bold; color:#aaa; text-transform:uppercase;";
+                row.appendChild(header);
+
+                const inputs = document.createElement("div");
+                inputs.style.cssText = "display:flex; gap:4px;";
+                ['x', 'y', 'z'].forEach(axis => {
+                    const input = document.createElement("input");
+                    input.type = "text";
+                    input.value = defaultVal;
+                    input.style.cssText = "width:100%; height:24px; background:#333; color:#fff; border:1px solid #555; border-radius:3px; font-size:12px; padding:2px 4px; outline:none;";
+                    input.dataset.key = `${prefix}_${axis}`;
+
+                    input.oninput = (e) => {
+                        const val = parseFloat(input.value) || 0;
+                        const w = node.widgets?.find(widget => widget.name === input.dataset.key);
+                        if (w) {
+                            w.value = val;
+                        }
+                        refreshTransforms();
+                    };
+                    inputs.appendChild(input);
+                });
+                row.appendChild(inputs);
+                return row;
+            };
+
+            transformPanel.appendChild(createTransformRow("Position", "translate", 0));
+            transformPanel.appendChild(createTransformRow("Rotation (Deg)", "rotate", 0));
+            transformPanel.appendChild(createTransformRow("Scale", "scale", 1));
+
+            transformBtn.onclick = (e) => {
+                e.stopPropagation();
+                transformPanel.style.display = transformPanel.style.display === "none" ? "flex" : "none";
+                transformBtn.style.background = transformPanel.style.display === "none" ? "#444" : "#666";
+            };
 
             // Hide playback controls for 3D Model Loader
             if (nodeData.name === "HYMotion3DModelLoader") {
                 playBtn.style.display = "none";
                 progress.style.display = "none";
+            }
+
+            // Hide gizmo controls for Legacy FBX Player
+            if (nodeData.name === "HYMotionFBXPlayer") {
+                gizmoGroup.style.display = "none";
             }
 
             // Resize handle at the bottom
@@ -131,7 +347,7 @@ app.registerExtension({
 
                 // Update node size to respect viewer height
                 node.size[1] = newHeight;
-                localStorage.setItem('hymotion_viewer_height', newHeight - 80);
+                localStorage.setItem('hymotion_viewer_height', newHeight - 90);
 
                 // Force immediate renderer resize
                 requestAnimationFrame(() => {
@@ -148,7 +364,7 @@ app.registerExtension({
                     isResizing = false;
 
                     // Save final node size
-                    localStorage.setItem('hymotion_viewer_height', node.size[1] - 80);
+                    localStorage.setItem('hymotion_viewer_height', node.size[1] - 90);
 
                     // Final sync after resize complete
                     setTimeout(() => {
@@ -164,7 +380,7 @@ app.registerExtension({
             container.appendChild(resizeHandle);
 
             this.addDOMWidget("3d_viewer", "viewer", container);
-            this.size = [400, parseInt(storedHeight) + 80]; // Add some padding for controls
+            this.size = [400, parseInt(storedHeight) + 90]; // Add some padding for controls
 
             let THREE = window.__HY_MOTION_THREE__ || null;
             let renderer, scene, camera, orbitControls;
@@ -185,12 +401,10 @@ app.registerExtension({
             let lastFbxUrl = null;
             let lastModelUrl = null;
             let animationFrameId = null;
-            const node = this;
 
             // Performance optimization flags
             let needsRender = true; // Dirty flag for smart rendering
             let isAnimating = false; // Track if animation loop should run
-            let boundingBoxCache = new Map(); // Cache for bounding boxes
 
             let raycaster = null;
             let selectedModels = []; // Array to support multi-selection
@@ -303,7 +517,10 @@ app.registerExtension({
                             }
                         });
                         transformControl.addEventListener('change', () => {
-                            requestRender(); // Request render on gizmo change
+                            if (transformControl.object && currentModel === transformControl.object) {
+                                syncWidgetsFromModel(currentModel);
+                            }
+                            requestRender();
                         });
 
                         // Gizmo mode switching function
@@ -354,6 +571,8 @@ app.registerExtension({
                         const handleKeyPress = (e) => {
                             // Only handle shortcuts when hovering over the canvas
                             if (!isHoveringCanvas) return;
+                            // Disable gizmo shortcuts for Legacy Player
+                            if (nodeData.name === "HYMotionFBXPlayer") return;
                             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
                             switch (e.key.toLowerCase()) {
@@ -557,8 +776,13 @@ app.registerExtension({
                     selectedModels.push(selection);
                 }
 
-                // Auto-attach gizmo if in gizmo mode and model is selected
-                if (this.transformControl && this.setGizmoMode && type === 'model') {
+                if (type === "model") {
+                    currentModel = obj.model;
+                    syncWidgetsFromModel(currentModel); // Sync UI TO this model's state
+                }
+
+                // Auto-attach gizmo if in gizmo mode and model is selected (except for Legacy Player)
+                if (nodeData.name !== "HYMotionFBXPlayer" && this.transformControl && this.setGizmoMode && type === 'model') {
                     const currentMode = [translateBtn, rotateBtn, scaleBtn].find(btn =>
                         btn.style.background === 'rgb(0, 102, 204)' || btn.style.background === '#0066cc'
                     )?.dataset.mode;
@@ -592,6 +816,7 @@ app.registerExtension({
 
                     const box = new THREE.BoxHelper(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)), 0x00ff00);
                     box.name = "selection_highlight";
+                    box.visible = false; // Hidden as requested: "dont remove only hide"
                     scene.add(box);
                     selection.highlight = box;
 
@@ -603,6 +828,7 @@ app.registerExtension({
 
                     const box = new THREE.BoxHelper(new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1)), 0xffff00);
                     box.name = "selection_highlight";
+                    box.visible = false; // Hidden as requested: "dont remove only hide"
                     scene.add(box);
                     selection.highlight = box;
                 }
@@ -851,10 +1077,6 @@ app.registerExtension({
                             progress.value = nextVal;
                         }
                     }
-
-                    // Update hit proxies and highlights when animating
-                    updateHitProxies();
-                    updateSelectionHighlights();
                 } else {
                     // When not playing, only update if orbit controls have damping
                     if (orbitControls && orbitControls.enableDamping) {
@@ -864,6 +1086,12 @@ app.registerExtension({
                         stopAnimating();
                         return;
                     }
+                }
+
+                // Update hit proxies and highlights whenever we are rendering to ensure consistency
+                if (shouldRender) {
+                    updateHitProxies();
+                    updateSelectionHighlights();
                 }
 
                 if (orbitControls) orbitControls.update();
@@ -892,14 +1120,7 @@ app.registerExtension({
                         obj.hitProxy = proxy;
                     }
 
-                    // Use cached box if available and not animating
-                    let box;
-                    if (!isPlaying && boundingBoxCache.has(obj)) {
-                        box = boundingBoxCache.get(obj);
-                    } else {
-                        box = getRealtimeBox(obj.model);
-                        if (!isPlaying) boundingBoxCache.set(obj, box); // Cache for static models
-                    }
+                    const box = getRealtimeBox(obj.model);
 
                     if (!box.isEmpty()) {
                         const size = box.getSize(new THREE.Vector3());
@@ -915,12 +1136,7 @@ app.registerExtension({
                 for (const selection of selectedModels) {
                     if (selection.highlight) {
                         if (selection.type === "model") {
-                            let box;
-                            if (!isPlaying && boundingBoxCache.has(selection.obj)) {
-                                box = boundingBoxCache.get(selection.obj);
-                            } else {
-                                box = getRealtimeBox(selection.obj.model);
-                            }
+                            const box = getRealtimeBox(selection.obj.model);
 
                             if (!box.isEmpty()) {
                                 const size = box.getSize(new THREE.Vector3());
@@ -941,7 +1157,6 @@ app.registerExtension({
                 loadedModels.forEach(m => {
                     scene.remove(m.model);
                     if (m.hitProxy) scene.remove(m.hitProxy);
-                    boundingBoxCache.delete(m); // Clear cache entry
                 });
                 loadedModels = [];
                 currentModel = null;
@@ -1083,6 +1298,14 @@ app.registerExtension({
                 }
 
                 console.log("[HY-Motion] Loading 3D Model Path:", modelPath, `(${index + 1}/${total})`);
+
+                // Optimization: Check if this model is already loaded
+                if (total === 1 && loadedModels.length === 1 && loadedModels[0].modelPath === modelPath) {
+                    console.log("[HY-Motion] Model already loaded, skipping redundant reload.");
+                    refreshTransforms();
+                    return;
+                }
+
                 if (index === 0) {
                     clearModels();
                     statusLabel.innerText = "Loading Model...";
@@ -1159,10 +1382,14 @@ app.registerExtension({
                         currentModel = fbx;
                         loadedModels.push({
                             model: fbx,
+                            modelPath: modelPath,
                             name: customName || filename,
                             fileName: filename,
                             subfolder: subfolder,
-                            fileType: type
+                            fileType: type,
+                            basePosition: { x: 0, y: 0, z: 0 },
+                            baseRotation: { x: 0, y: 0, z: 0 },
+                            baseScale: { x: 1, y: 1, z: 1 }
                         });
 
                         // Positioning side-by-side
@@ -1173,6 +1400,20 @@ app.registerExtension({
                         const box = new THREE.Box3().setFromObject(fbx);
                         const maxDim = Math.max(...box.getSize(new THREE.Vector3()).toArray());
                         if (maxDim > 0) fbx.scale.setScalar(1.7 / maxDim);
+
+                        // Update base transforms to match finalized load state
+                        const obj = loadedModels.find(m => m.model === fbx);
+                        if (obj) {
+                            obj.basePosition.x = fbx.position.x;
+                            obj.basePosition.y = fbx.position.y;
+                            obj.basePosition.z = fbx.position.z;
+                            obj.baseRotation.x = fbx.rotation.x * 180 / Math.PI;
+                            obj.baseRotation.y = fbx.rotation.y * 180 / Math.PI;
+                            obj.baseRotation.z = fbx.rotation.z * 180 / Math.PI;
+                            obj.baseScale.x = fbx.scale.x;
+                            obj.baseScale.y = fbx.scale.y;
+                            obj.baseScale.z = fbx.scale.z;
+                        }
 
                         if (fbx.animations && fbx.animations.length > 0 || (result.animations && result.animations.length > 0)) {
                             const m = new THREE.AnimationMixer(fbx);
@@ -1210,6 +1451,15 @@ app.registerExtension({
                         } else {
                             centerCameraOnObject(fbx);
                         }
+
+                        // Show Transform and Apply buttons for loader
+                        if (nodeData.name === "HYMotion3DModelLoader") {
+                            applyBtn.style.display = "block";
+                            transformBtn.style.display = "block";
+                        }
+
+                        // Apply current transform widget values immediately
+                        refreshTransforms();
                     }, (xhr) => {
                         if (xhr.lengthComputable) statusLabel.innerText = `Loading: ${Math.round((xhr.loaded / xhr.total) * 100)}%`;
                     }, (err) => {
@@ -1271,12 +1521,11 @@ app.registerExtension({
                 if (data.model_url) {
                     const url = ensureString(data.model_url);
                     const format = ensureString(data.format || 'fbx');
-                    const cacheKey = `${url}|${format}`;
-                    if (cacheKey !== lastModelUrl) {
-                        lastModelUrl = cacheKey;
-                        loadGenericModel(url, format);
-                    }
+                    await loadGenericModel(url, format);
                 }
+
+                // Also refresh visuals if transform changed via Run
+                refreshTransforms();
             };
 
             // Lazy initialization - only init when data is actually loaded
@@ -1328,6 +1577,42 @@ app.registerExtension({
                 handleData(output);
             };
 
+            // Add real-time callbacks and hide transform widgets from Node UI
+            const hideTransformWidgets = () => {
+                const transformWidgets = [
+                    "translate_x", "translate_y", "translate_z",
+                    "rotate_x", "rotate_y", "rotate_z",
+                    "scale_x", "scale_y", "scale_z"
+                ];
+                transformWidgets.forEach(wName => {
+                    const w = node.widgets?.find(widget => widget.name === wName);
+                    if (w) {
+                        // Aggressive hiding strategy for ComfyUI
+                        w.type = "hidden";
+                        w.hidden = true;
+                        if (!w.computeSize) {
+                            w.computeSize = () => [0, -4]; // Standard ComfyUI trick for hidden widgets
+                        }
+
+                        // Keep the sync callback logic
+                        if (!w._sync_callback_added) {
+                            const oldCb = w.callback;
+                            w.callback = function () {
+                                if (oldCb) oldCb.apply(this, arguments);
+                                refreshTransforms();
+                            };
+                            w._sync_callback_added = true;
+                        }
+                    }
+                });
+                if (app.graph) app.graph.setDirtyCanvas(true);
+            };
+
+            // Run hiding immediately and also with delay to catch post-init widgets
+            hideTransformWidgets();
+            setTimeout(hideTransformWidgets, 500);
+            setTimeout(hideTransformWidgets, 1500);
+
             playBtn.onclick = (e) => {
                 e.stopPropagation();
                 isPlaying = !isPlaying;
@@ -1336,6 +1621,95 @@ app.registerExtension({
             };
             cycleBtn.onclick = (e) => { e.stopPropagation(); cycleSelection(); };
             exportBtn.onclick = (e) => { e.stopPropagation(); exportSelected(); };
+
+            applyBtn.onclick = async (e) => {
+                e.stopPropagation();
+                if (!currentModel) return;
+
+                const obj = loadedModels.find(m => m.model === currentModel);
+                if (!obj) return;
+
+                // Gather current transform values from widgets 
+                const tx = node.widgets?.find(w => w.name === "translate_x")?.value || 0;
+                const ty = node.widgets?.find(w => w.name === "translate_y")?.value || 0;
+                const tz = node.widgets?.find(w => w.name === "translate_z")?.value || 0;
+                const rx = node.widgets?.find(w => w.name === "rotate_x")?.value || 0;
+                const ry = node.widgets?.find(w => w.name === "rotate_y")?.value || 0;
+                const rz = node.widgets?.find(w => w.name === "rotate_z")?.value || 0;
+                const sx = node.widgets?.find(w => w.name === "scale_x")?.value || 1;
+                const sy = node.widgets?.find(w => w.name === "scale_y")?.value || 1;
+                const sz = node.widgets?.find(w => w.name === "scale_z")?.value || 1;
+
+                statusLabel.innerText = "Baking Asset...";
+                statusLabel.style.color = "#ffcc00";
+
+                try {
+                    const response = await api.fetchApi("/hymotion/bake_fbx", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            input_path: obj.modelPath,
+                            translation: [tx, ty, tz],
+                            rotation: [rx, ry, rz],
+                            scale: [sx, sy, sz]
+                        })
+                    });
+
+                    if (!response.ok) {
+                        const errData = await response.json();
+                        throw new Error(errData.message || "Bake failed");
+                    }
+
+                    const resData = await response.json();
+                    console.log("[HY-Motion] Asset Baked Successfully:", resData.path);
+                    statusLabel.innerText = "Bake Success!";
+                    statusLabel.style.color = "#00ff00";
+
+                    // Update base transforms in memory (since the file is now physically changed)
+                    obj.basePosition.x = currentModel.position.x;
+                    obj.basePosition.y = currentModel.position.y;
+                    obj.basePosition.z = currentModel.position.z;
+                    obj.baseRotation.x = currentModel.rotation.x * 180 / Math.PI;
+                    obj.baseRotation.y = currentModel.rotation.y * 180 / Math.PI;
+                    obj.baseRotation.z = currentModel.rotation.z * 180 / Math.PI;
+                    obj.baseScale.x = currentModel.scale.x;
+                    obj.baseScale.y = currentModel.scale.y;
+                    obj.baseScale.z = currentModel.scale.z;
+
+                    // Reset ComfyUI widgets to zero (as the transform is now 'baked' into the base)
+                    const transformWidgets = [
+                        "translate_x", "translate_y", "translate_z",
+                        "rotate_x", "rotate_y", "rotate_z"
+                    ];
+                    transformWidgets.forEach(wName => {
+                        const w = node.widgets?.find(widget => widget.name === wName);
+                        if (w) w.value = 0;
+                    });
+                    ["scale_x", "scale_y", "scale_z"].forEach(wName => {
+                        const w = node.widgets?.find(widget => widget.name === wName);
+                        if (w) w.value = 1.0;
+                    });
+
+                    if (app.graph) app.graph.setDirtyCanvas(true);
+
+                    // Sync panel back to 0
+                    const pInputs = transformOverlay.querySelectorAll('input');
+                    pInputs.forEach(input => {
+                        if (input.dataset.key.startsWith('scale')) input.value = "1.00";
+                        else input.value = "0.00";
+                    });
+
+                    // Small delay to show "Success" then revert status
+                    setTimeout(() => {
+                        statusLabel.innerText = "Model Ready";
+                        statusLabel.style.color = "white";
+                    }, 2000);
+
+                } catch (e) {
+                    console.error("[HY-Motion] Bake Error:", e);
+                    statusLabel.innerText = "Bake Error: " + e.message;
+                    statusLabel.style.color = "red";
+                }
+            };
             progress.oninput = () => {
                 isPlaying = false; playBtn.innerText = "Play";
                 currentFrame = (progress.value / 100) * maxFrames;
@@ -1373,7 +1747,7 @@ app.registerExtension({
             if (!container || !canvasContainer) return;
 
             // Save the height preference for next load
-            localStorage.setItem('hymotion_viewer_height', size[1] - 80);
+            localStorage.setItem('hymotion_viewer_height', size[1] - 90);
 
             // Update renderer and camera if they exist
             // Use a small delay to ensure DOM has updated
