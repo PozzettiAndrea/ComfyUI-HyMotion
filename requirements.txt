@@ -1,0 +1,17 @@
+--extra-index-url https://gitlab.inria.fr/api/v4/projects/18692/packages/pypi/simple
+fbxsdkpy==2020.1.post2
+
+torchdiffeq>=0.2.5
+transforms3d>=0.4.2
+omegaconf>=2.3.0
+accelerate>=0.30.0
+huggingface_hub>=0.30.0
+bitsandbytes>=0.42.0
+safetensors>=0.4.0
+scipy>=1.10.0
+smplx>=0.1.28
+numpy
+tqdm
+hf-xet
+opencv-python>=4.8.0
+regex; sys_platform == 'win32'
